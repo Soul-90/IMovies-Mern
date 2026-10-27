@@ -1,27 +1,16 @@
+const Booking = require('../models/Booking');
 const Movie = require('../models/Movie');
 const Theater = require('../models/Theater');
 const Show = require('../models/Show');
-const Booking = require('../models/Booking');
 
-// Fetch aggregated stats for admin dashboard
 exports.getAdminStats = async (req, res) => {
     try {
         const totalMovies = await Movie.countDocuments();
         const totalTheaters = await Theater.countDocuments();
         const totalShows = await Show.countDocuments();
-        const totalBookings = await Booking.countDocuments();
-
-        // Calculate total platform revenue from confirmed bookings
-        const revenueResult = await Booking.aggregate([
-            { $match: { status: 'Confirmed' } },
-            { $group: { _id: null, total: { $sum: '$totalPrice' } } }
-        ]);
-        const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
-
-        // Get 5 most recent bookings across the platform
-        const recentBookings = await Booking.find()
-            .sort({ createdAt: -1 })
-            .limit(5)
+        
+        const allBookings = await Booking.find()
+            .populate('user', 'username email')
             .populate({
                 path: 'show',
                 populate: [
@@ -29,7 +18,14 @@ exports.getAdminStats = async (req, res) => {
                     { path: 'theater', select: 'name' }
                 ]
             })
-            .populate('user', 'username email');
+            .sort({ createdAt: -1 });
+
+        const totalBookings = allBookings.length;
+
+        // BUG FIX: Calculate Net Revenue only from Confirmed bookings
+        const totalRevenue = allBookings
+            .filter(booking => booking.status === 'Confirmed')
+            .reduce((sum, booking) => sum + booking.totalPrice, 0);
 
         res.status(200).json({
             totalMovies,
@@ -37,7 +33,7 @@ exports.getAdminStats = async (req, res) => {
             totalShows,
             totalBookings,
             totalRevenue,
-            recentBookings
+            recentBookings: allBookings.slice(0, 15) // Send latest 15 transactions
         });
     } catch (err) {
         res.status(500).json({ message: err.message });

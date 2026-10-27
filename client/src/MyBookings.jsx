@@ -1,91 +1,137 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 function MyBookings() {
-    const [bookings, setBookings] = useState([]);
-    const [message, setMessage] = useState('');
+    const [activeTickets, setActiveTickets] = useState([]);
+    const [pastTickets, setPastTickets] = useState([]);
+    const [error, setError] = useState('');
+    const navigate = useNavigate();
 
     const fetchBookings = async () => {
         const token = localStorage.getItem('token');
         if (!token) {
-            setMessage('Please login to view your booking history.');
+            navigate('/login');
             return;
         }
 
         try {
             const tokenData = JSON.parse(atob(token.split('.')[1]));
             const res = await axios.get(`http://localhost:8000/api/bookings/user/${tokenData.id}`);
-            setBookings(res.data);
+            
+            const now = new Date();
+            const active = [];
+            const past = [];
+
+            res.data.forEach(booking => {
+                if (!booking.show) return;
+                
+                // UX FIX: Accurate Timezone Handling
+                const showDateTime = new Date(`${booking.show.date}T${booking.show.time}:00+05:30`);
+                
+                if (showDateTime > now && booking.status === 'Confirmed') {
+                    active.push(booking);
+                } else {
+                    past.push(booking);
+                }
+            });
+
+            setActiveTickets(active);
+            setPastTickets(past);
         } catch (err) {
-            console.error("Error fetching bookings", err);
+            setError('Error fetching your bookings.');
+            console.error(err);
         }
     };
 
     useEffect(() => {
         fetchBookings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const handleCancelBooking = async (bookingId) => {
+    const handleCancel = async (bookingId) => {
+        if (!window.confirm("Are you sure you want to cancel this ticket?")) return;
+        
         try {
-            const res = await axios.put(`http://localhost:8000/api/bookings/cancel/${bookingId}`);
-            setMessage(res.data.message);
-            fetchBookings(); // Refresh list
+            const token = localStorage.getItem('token');
+            const tokenData = JSON.parse(atob(token.split('.')[1]));
+
+            // SECURITY FIX: Send userId to the backend to prove ownership
+            await axios.put(`http://localhost:8000/api/bookings/cancel/${bookingId}`, {
+                userId: tokenData.id
+            });
+            fetchBookings(); 
         } catch (err) {
-            setMessage(err.response?.data?.message || 'Error cancelling booking');
+            alert(err.response?.data?.message || 'Error cancelling booking');
         }
     };
 
-    return (
-        <div style={{ marginTop: '30px' }}>
-            <h2>My Booking History</h2>
-            {message && <p>{message}</p>}
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
-                {bookings.length === 0 && !message ? <p>No bookings found.</p> : null}
-
-                {bookings.map((b) => (
-                    <div key={b._id} style={{ 
-                        border: '1px solid #444', 
-                        padding: '15px', 
-                        borderRadius: '8px', 
-                        backgroundColor: '#222',
-                        color: 'white',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                    }}>
-                        <div>
-                            <h3 style={{ marginTop: 0 }}>{b.show?.movie?.title}</h3>
-                            <p style={{ margin: '4px 0' }}><strong>Theater:</strong> {b.show?.theater?.name} ({b.show?.theater?.location})</p>
-                            <p style={{ margin: '4px 0' }}><strong>Date & Time:</strong> {b.show?.date} at {b.show?.time}</p>
-                            <p style={{ margin: '4px 0' }}><strong>Seats:</strong> {b.seatNumbers?.join(', ')}</p>
-                            <p style={{ margin: '4px 0' }}><strong>Total Paid:</strong> ₹{b.totalPrice}</p>
-                            <p style={{ margin: '4px 0' }}>
-                                <strong>Status:</strong> 
-                                <span style={{ color: b.status === 'Confirmed' ? '#4caf50' : '#f44336', marginLeft: '6px' }}>
-                                    {b.status}
-                                </span>
-                            </p>
-                        </div>
-
-                        {b.status === 'Confirmed' && (
-                            <button 
-                                onClick={() => handleCancelBooking(b._id)}
-                                style={{
-                                    padding: '10px 15px',
-                                    backgroundColor: '#d32f2f',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '4px',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                Cancel Ticket
-                            </button>
-                        )}
-                    </div>
-                ))}
+    const TicketCard = ({ booking, isActive }) => (
+        <div className="bill-card" style={{ padding: '20px', marginBottom: '0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+            <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <h3 style={{ margin: 0, fontSize: '18px', color: 'var(--text-main)' }}>
+                        {booking.show.movie?.title}
+                    </h3>
+                    {booking.status === 'Confirmed' ? (
+                        <span className="status-chip status-chip-confirmed">Confirmed</span>
+                    ) : (
+                        <span className="status-chip status-chip-cancelled">Cancelled</span>
+                    )}
+                </div>
+                
+                <p style={{ margin: '6px 0', fontSize: '13.5px', color: 'var(--text-muted)' }}>
+                    <strong>Theater:</strong> {booking.show.theater?.name}
+                </p>
+                <p style={{ margin: '6px 0', fontSize: '13.5px', color: 'var(--text-muted)' }}>
+                    <strong>Showtime:</strong> {booking.show.date} at {booking.show.time}
+                </p>
+                <p style={{ margin: '6px 0', fontSize: '13.5px', color: 'var(--text-muted)' }}>
+                    <strong>Seats:</strong> <span style={{ color: 'var(--primary)' }}>{booking.seatNumbers.join(', ')}</span>
+                </p>
+                <p style={{ margin: '6px 0', fontSize: '13.5px', color: 'var(--text-muted)' }}>
+                    <strong>Amount Paid:</strong> ₹{booking.totalPrice}
+                </p>
             </div>
+
+            {isActive && booking.status === 'Confirmed' && (
+                <button 
+                    onClick={() => handleCancel(booking._id)} 
+                    className="btn-danger" 
+                    style={{ marginTop: '20px', width: '100%' }}
+                >
+                    Cancel Ticket
+                </button>
+            )}
+        </div>
+    );
+
+    return (
+        <div>
+            <h2 style={{ fontSize: '28px', fontWeight: '700', marginBottom: '8px' }}>My Orders</h2>
+            {error && <p style={{ color: 'var(--accent-red)' }}>{error}</p>}
+            
+            <h3 style={{ borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginTop: '32px', color: 'var(--primary)' }}>
+                🎫 Upcoming Shows
+            </h3>
+            {activeTickets.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)' }}>You have no upcoming confirmed shows.</p>
+            ) : (
+                <div className="card-grid">
+                    {activeTickets.map(booking => <TicketCard key={booking._id} booking={booking} isActive={true} />)}
+                </div>
+            )}
+
+            <h3 style={{ borderBottom: '1px solid var(--border-glass)', paddingBottom: '12px', marginTop: '48px' }}>
+                🕰️ Past History & Cancellations
+            </h3>
+            {pastTickets.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)' }}>No past booking history found.</p>
+            ) : (
+                <div className="card-grid" style={{ opacity: '0.75' }}>
+                    {pastTickets.map(booking => <TicketCard key={booking._id} booking={booking} isActive={false} />)}
+                </div>
+            )}
         </div>
     );
 }
